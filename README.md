@@ -1,0 +1,1 @@
+# EMA-River-Stoch-Pullback-Alert-Trend-Protected-
