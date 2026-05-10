@@ -1,0 +1,235 @@
+//@version=5
+indicator("EMA River + Introvert Trading", overlay=true)
+
+// =====================================================
+// INPUTS
+// =====================================================
+
+ema50Len  = input.int(50,  "EMA 50", display=display.none)
+ema100Len = input.int(100, "EMA 100", display=display.none)
+ema200Len = input.int(200, "EMA 200", display=display.none)
+
+kLen      = input.int(14, "Stoch K Length", display=display.none)
+kSmooth   = input.int(3,  "Stoch K Smoothing", display=display.none)
+dSmooth   = input.int(3,  "Stoch D Smoothing", display=display.none)
+
+touchPct     = input.float(0.3, "EMA Touch Tolerance %", step=0.1, display=display.none)
+lookbackBars = input.int(20, "Bars After EMA Touch", minval=1, display=display.none)
+
+// =====================================================
+// EMA CALCULATIONS
+// =====================================================
+
+ema50  = ta.ema(close, ema50Len)
+ema100 = ta.ema(close, ema100Len)
+ema200 = ta.ema(close, ema200Len)
+
+// =====================================================
+// STOCHASTIC CALCULATIONS (14,3,3)
+// =====================================================
+
+rawK = ta.stoch(close, high, low, kLen)
+k    = ta.sma(rawK, kSmooth)
+d    = ta.sma(k, dSmooth)
+
+// =====================================================
+// TREND CONDITIONS
+// =====================================================
+
+buyTrend  = ema50 > ema100 and ema100 > ema200
+sellTrend = ema50 < ema100 and ema100 < ema200
+
+// =====================================================
+// EMA50 HIT/CROSS TRACKING
+// =====================================================
+
+priceHitEma50Buy  = low  <= ema50
+priceHitEma50Sell = high >= ema50
+
+var int lastEma50HitBuyBar  = na
+var int lastEma50HitSellBar = na
+
+if buyTrend and priceHitEma50Buy
+    lastEma50HitBuyBar := bar_index
+
+if sellTrend and priceHitEma50Sell
+    lastEma50HitSellBar := bar_index
+
+if not buyTrend
+    lastEma50HitBuyBar := na
+
+if not sellTrend
+    lastEma50HitSellBar := na
+
+ema50HitBuyValid  = not na(lastEma50HitBuyBar)  and (bar_index - lastEma50HitBuyBar  <= lookbackBars)
+ema50HitSellValid = not na(lastEma50HitSellBar) and (bar_index - lastEma50HitSellBar <= lookbackBars)
+
+// =====================================================
+// EMA TOUCH LOGIC
+// =====================================================
+
+isNearEMA(ema) =>
+    withinTolerance = math.abs(close - ema) / ema * 100 <= touchPct
+    hitCondition    = buyTrend ? ema50HitBuyValid : sellTrend ? ema50HitSellValid : false
+    withinTolerance and hitCondition
+
+touchNow =
+     isNearEMA(ema50)  or
+     isNearEMA(ema100) or
+     isNearEMA(ema200)
+
+var int lastBuyTouchBar  = na
+var int lastSellTouchBar = na
+
+if buyTrend and touchNow
+    lastBuyTouchBar := bar_index
+
+if sellTrend and touchNow
+    lastSellTouchBar := bar_index
+
+buyPullbackValid =
+     not na(lastBuyTouchBar) and
+     (bar_index - lastBuyTouchBar <= lookbackBars)
+
+sellPullbackValid =
+     not na(lastSellTouchBar) and
+     (bar_index - lastSellTouchBar <= lookbackBars)
+
+// =====================================================
+// STOCHASTIC SEQUENCE LOGIC
+// =====================================================
+
+var bool stochOversoldConfirmed = false
+
+if not buyTrend
+    stochOversoldConfirmed := false
+
+if stochOversoldConfirmed and k > 80
+    stochOversoldConfirmed := false
+
+if buyTrend and k < 20
+    stochOversoldConfirmed := true
+
+buyStochSignal = buyTrend and stochOversoldConfirmed and k > 20
+
+if buyStochSignal
+    stochOversoldConfirmed := false
+
+var bool stochOverboughtConfirmed = false
+
+if not sellTrend
+    stochOverboughtConfirmed := false
+
+if stochOverboughtConfirmed and k < 20
+    stochOverboughtConfirmed := false
+
+if sellTrend and k > 80
+    stochOverboughtConfirmed := true
+
+sellStochSignal = sellTrend and stochOverboughtConfirmed and k < 80
+
+if sellStochSignal
+    stochOverboughtConfirmed := false
+
+// =====================================================
+// TREND PROTECTION FILTER
+// =====================================================
+
+buyPriceValid  = close >= ema200
+sellPriceValid = close <= ema200
+
+// =====================================================
+// FINAL SIGNALS
+// =====================================================
+
+buySignal =
+     buyTrend and
+     buyPullbackValid and
+     buyStochSignal and
+     buyPriceValid
+
+sellSignal =
+     sellTrend and
+     sellPullbackValid and
+     sellStochSignal and
+     sellPriceValid
+
+if buySignal
+    lastBuyTouchBar        := na
+    lastEma50HitBuyBar     := na
+    stochOversoldConfirmed := false
+
+if sellSignal
+    lastSellTouchBar          := na
+    lastEma50HitSellBar       := na
+    stochOverboughtConfirmed  := false
+
+// =====================================================
+// EMA RIVER COLORS
+// =====================================================
+
+lightGreen = color.new(#007bff, 32)
+darkGreen  = color.new(#007bff, 32)
+lightRed   = color.new(#ff0000, 43)
+darkRed    = color.new(#ff0000, 43)
+greyLight  = color.new(#f8f8f8, 57)
+greyDark   = color.new(#f8f8f8, 57)
+
+riverColor1 =
+     buyTrend  ? lightGreen :
+     sellTrend ? lightRed   :
+                 greyLight
+
+riverColor2 =
+     buyTrend  ? darkGreen :
+     sellTrend ? darkRed   :
+                 greyDark
+
+// =====================================================
+// PLOTS
+// =====================================================
+
+p1 = plot(ema50,  title="EMA50",  color=color.new(color.yellow, 100), linewidth=1)
+p2 = plot(ema100, title="EMA100", color=color.new(color.orange, 100), linewidth=1)
+p3 = plot(ema200, title="EMA200", color=color.new(color.red,    100), linewidth=1)
+
+fill(p1, p2, color=riverColor1, title="River 50-100")
+fill(p2, p3, color=riverColor2, title="River 100-200")
+
+// =====================================================
+// BUY / SELL LABELS
+// =====================================================
+
+plotshape(
+     buySignal,
+     title="BUY",
+     location=location.belowbar,
+     style=shape.labelup,
+     color=color.lime,
+     text="BUY",
+     textcolor=color.rgb(0, 0, 0),
+     size=size.tiny)
+
+plotshape(
+     sellSignal,
+     title="SELL",
+     location=location.abovebar,
+     style=shape.labeldown,
+     color=color.red,
+     text="SELL",
+     textcolor=color.white,
+     size=size.tiny)
+
+// =====================================================
+// ALERT CONDITIONS
+// =====================================================
+
+alertcondition(
+     buySignal,
+     title="BUY Alert",
+     message="BUY: EMA50>EMA100>EMA200 + Pullback to EMA + Stoch closed below 20 then closed above 20 + Price above EMA200")
+
+alertcondition(
+     sellSignal,
+     title="SELL Alert",
+     message="SELL: EMA50<EMA100<EMA200 + Pullback to EMA + Stoch closed above 80 then closed below 80 + Price below EMA200")
